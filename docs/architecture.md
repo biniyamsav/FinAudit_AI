@@ -297,27 +297,96 @@ Technology names describe the intended design. Specific models, providers, and w
 
 ### 6.1 PostgreSQL as the Primary Application Store
 
-PostgreSQL stores structured application records, workspace metadata, extracted financial information, and searchable derived data required by FinAudit_AI.
+PostgreSQL stores application records, workspace metadata, document metadata, extracted content, and ingestion job status.
 
-The initial hosted MVP follows a **persistent account, temporary workspace** model. Uploaded financial documents and the derived information needed to analyze them are temporary by default. The system must not retain uploaded financial data permanently unless a separate, explicitly approved feature introduces that capability.
+The initial database schema consists of **five tables**.
 
-The initial logical data model includes the following entities.
+#### 1. `users`
 
-| Entity | Purpose |
-| :--- | :--- |
-| User | User identity and account status, if account registration is enabled. Passwords must never be stored in plaintext. |
-| Workspace | Isolated analysis session, lifecycle status, creation time, last activity, and expiration time. |
-| Document | Temporary document metadata, workspace ownership, original filename, storage key, checksum, size, media type, parser version, and processing status. |
-| Page / Section | Extracted document structure, page numbers, section paths, and extraction quality. |
-| Parent Chunk | Larger contextual unit, such as a section or subsection. |
-| Child Chunk | Smaller retrieval unit linked to a parent and its source location. |
-| Table / Cell / Row | Extracted financial tables, including headers, values, units, and reporting periods. |
-| Footnote | Extracted footnote content and relationships to relevant tables or financial facts. |
-| Financial Fact | Reported or derived financial value with context, provenance, and calculation references. |
-| Ingestion Job | Temporary processing state, attempt count, idempotency key, timestamps, and safe error code. |
-| Conversation / Message | Workspace questions and answers, retained for the workspace lifetime by default. |
-| Audit Finding | Temporary compliance findings, severity, rule references, and supporting evidence references. |
-| Audit Event | Necessary security and operational metadata, with sensitive content excluded or minimized. |
+Stores user account information.
+
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | UUID | Primary key |
+| `email` | VARCHAR | Unique, not null |
+| `password_hash` | VARCHAR | Not null |
+| `created_at` | TIMESTAMPTZ | Not null |
+
+#### 2. `workspaces`
+
+Represents a temporary analysis session.
+
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | UUID | Primary key |
+| `user_id` | UUID | Foreign key to `users.id`, nullable |
+| `status` | VARCHAR | Not null |
+| `created_at` | TIMESTAMPTZ | Not null |
+| `expires_at` | TIMESTAMPTZ | Not null |
+
+#### 3. `documents`
+
+Stores metadata and the storage reference for each uploaded file. Original file bytes remain in temporary file/object storage, not in PostgreSQL.
+
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | UUID | Primary key |
+| `workspace_id` | UUID | Foreign key to `workspaces.id` |
+| `filename` | VARCHAR | Not null |
+| `file_type` | VARCHAR | Not null |
+| `storage_key` | TEXT | Not null |
+| `file_size` | BIGINT | Not null |
+| `checksum` | VARCHAR | Not null |
+| `status` | VARCHAR | Not null |
+| `created_at` | TIMESTAMPTZ | Not null |
+
+A unique constraint on `(workspace_id, checksum)` prevents duplicate registration of the same file within a workspace.
+
+#### 4. `ingestion_jobs`
+
+Tracks asynchronous document extraction and processing.
+
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | UUID | Primary key |
+| `document_id` | UUID | Foreign key to `documents.id` |
+| `status` | VARCHAR | Not null |
+| `attempt_count` | INTEGER | Not null |
+| `error_code` | VARCHAR | Nullable |
+| `created_at` | TIMESTAMPTZ | Not null |
+| `started_at` | TIMESTAMPTZ | Nullable |
+| `completed_at` | TIMESTAMPTZ | Nullable |
+
+A document may have multiple jobs when processing requires retries.
+
+#### 5. `extracted_content`
+
+Stores the extracted document content in a flexible JSONB structure.
+
+| Column | Type | Constraints |
+|---|---|---|
+| `id` | UUID | Primary key |
+| `document_id` | UUID | Unique foreign key to `documents.id` |
+| `content` | JSONB | Not null |
+| `created_at` | TIMESTAMPTZ | Not null |
+| `updated_at` | TIMESTAMPTZ | Not null |
+
+The JSONB content can represent extracted text, pages, sections, tables, rows, cells, and source locations. The structure varies according to the document format; separate PostgreSQL tables are not required for every document structure.
+
+### Relationships
+
+- One user can own multiple workspaces.
+- One workspace can contain multiple documents.
+- One document can have multiple ingestion jobs.
+- One document has one current extracted-content record.
+
+### Temporary Data and Cleanup
+
+Original files, extracted content, and ingestion records are temporary and belong to the workspace lifecycle. Workspace cleanup must remove associated database records and original files from temporary storage.
+
+Foreign keys, indexes, uniqueness constraints, and cascading deletion behavior must be implemented through Alembic migrations and verified with tests.
+
+This is the initial physical database schema. Additional tables will be introduced only when a demonstrated requirement justifies them.|
 
 These are logical entities, not instructions to create every table immediately. Physical schemas must be introduced through migrations during the appropriate implementation phase.
 
