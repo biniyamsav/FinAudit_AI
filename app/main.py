@@ -20,7 +20,7 @@ def create_app() -> FastAPI:
     )
 
     register_error_handlers(app)
-    app.include_router(api_router)
+    app.include_router(api_router, prefix=settings.api_v1_prefix)
 
     return app
 
