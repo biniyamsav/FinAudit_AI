@@ -60,3 +60,4 @@ uploads/
 model_artifacts/
 *.sqlite
 *.db
+temporary_uploads/

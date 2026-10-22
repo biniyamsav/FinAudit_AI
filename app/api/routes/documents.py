@@ -1,0 +1,108 @@
+import hashlib
+import uuid
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Annotated
+
+from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, status
+from pydantic import BaseModel, ConfigDict
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.core.config import get_settings
+from app.db.models import Document, IngestionJob, Workspace
+from app.db.session import get_db
+
+router = APIRouter(prefix="/workspaces/{workspace_id}/documents", tags=["documents"])
+
+ALLOWED_EXTENSIONS = {
+    ".pdf", ".docx", ".xlsx", ".xls", ".csv", ".png", ".jpg", ".jpeg"
+}
+MAX_UPLOAD_BYTES = 25 * 1024 * 1024
+CHUNK_SIZE = 1024 * 1024
+
+
+class DocumentResponse(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    filename: str
+    file_type: str
+    file_size: int
+    checksum: str
+    status: str
+    created_at: datetime
+
+
+@router.post("", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
+def upload_document(
+    workspace_id: uuid.UUID,
+    file: UploadFile,
+    response: Response,
+    db: Annotated[Session, Depends(get_db)],
+) -> Document:
+    workspace = db.get(Workspace, workspace_id)
+    if (
+        workspace is None
+        or workspace.status != "active"
+        or workspace.expires_at <= datetime.now(timezone.utc)
+    ):
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found.")
+
+    filename = Path(file.filename or "").name
+    if Path(filename).suffix.lower() not in ALLOWED_EXTENSIONS:
+        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Unsupported file type.")
+
+    document_id = uuid.uuid4()
+    folder = Path(get_settings().temp_upload_dir) / str(workspace_id)
+    folder.mkdir(parents=True, exist_ok=True)
+    path = folder / str(document_id)
+
+    sha = hashlib.sha256()
+    size = 0
+    try:
+        with path.open("wb") as out:
+            while chunk := file.file.read(CHUNK_SIZE):
+                size += len(chunk)
+                if size > MAX_UPLOAD_BYTES:
+                    raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "File too large.")
+                sha.update(chunk)
+                out.write(chunk)
+        if size == 0:
+            raise HTTPException(status.HTTP_400_BAD_REQUEST, "File is empty.")
+    except Exception:
+        path.unlink(missing_ok=True)
+        raise
+
+    checksum = sha.hexdigest()
+    existing = db.scalars(
+        select(Document).where(
+            Document.workspace_id == workspace_id, Document.checksum == checksum
+        )
+    ).first()
+    if existing is not None:
+        path.unlink(missing_ok=True)
+        response.status_code = status.HTTP_200_OK
+        return existing
+
+    try:
+        document = Document(
+            id=document_id,
+            workspace_id=workspace_id,
+            filename=filename[:255],
+            file_type=(file.content_type or "application/octet-stream")[:100],
+            file_size=size,
+            checksum=checksum,
+        )
+        db.add(document)
+        db.flush()
+        db.add(IngestionJob(document_id=document_id))
+        db.commit()
+    except Exception:
+        db.rollback()
+        path.unlink(missing_ok=True)
+        raise
+
+    db.refresh(document)
+    return document
