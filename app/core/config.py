@@ -20,12 +20,11 @@ class Settings(BaseSettings):
 
     database_url: SecretStr | None = None
 
-    object_storage_backend: Literal["local", "s3"] = "local"
-    object_storage_path: str = "./temporary_uploads"
-    object_storage_bucket: str | None = None
-    object_storage_endpoint_url: str | None = None
+    temp_upload_dir: str = "./temporary_uploads"
+    workspace_ttl_hours: int = 24
 
     llm_provider_mode: Literal["mock", "external"] = "mock"
+    llm_api_key: SecretStr | None = None
 
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
     def validate_for_startup(self) -> None:

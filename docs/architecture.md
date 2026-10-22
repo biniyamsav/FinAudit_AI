@@ -295,6 +295,42 @@ Technology names describe the intended design. Specific models, providers, and w
 
 ## 6. Data Architecture
 
+### 6.2. Database Architecture
+
+FinAudit_AI uses PostgreSQL as its primary relational database and Weaviate as its vector database. Each database serves a different purpose.
+
+**PostgreSQL — Primary Relational Database**
+
+PostgreSQL stores structured application data and extracted financial information. The initial schema consists of five tables:
+
+1. `users` — Stores user account information.
+2. `workspaces` — Manages temporary user workspaces and their expiration.
+3. `documents` — Stores uploaded document metadata and storage references.
+4. `ingestion_jobs` — Tracks document extraction jobs, their status, and errors.
+5. `extracted_content` — Stores extracted document content in JSONB format, including relevant text, tables, and structured financial data.
+
+**Weaviate — Vector Database**
+
+Weaviate stores vector embeddings and their corresponding text chunks generated from extracted documents. It enables semantic search, allowing the system to retrieve relevant document passages based on the meaning of a user's question rather than relying only on exact keyword matches.
+
+**Temporary File Storage**
+
+Original uploaded files, including PDFs, spreadsheets, and images, are stored separately from both databases. PostgreSQL maintains their metadata and storage references.
+
+**Data Processing and Retrieval Flow**
+
+1. Users upload documents to a temporary workspace.
+2. The original files are stored in temporary file storage, and their metadata is recorded in PostgreSQL.
+3. Background ingestion jobs extract text, tables, and relevant financial data from the uploaded documents.
+4. Extracted content is stored in PostgreSQL, while searchable text chunks and their vector embeddings are stored in Weaviate.
+5. When a user asks a question, Weaviate retrieves relevant document passages. PostgreSQL provides structured financial data when needed for accurate filtering, aggregation, and calculations.
+6. The retrieved information is passed to the AI component to generate an answer grounded in the uploaded documents.
+
+**Data Lifecycle and Cleanup**
+
+When a workspace expires, the system deletes its associated PostgreSQL records, original uploaded files, and Weaviate vectors. This ensures that temporary financial documents and their derived data do not remain stored beyond the workspace's permitted lifetime.
+
+The initial implementation will prioritize PostgreSQL and document extraction, followed by Weaviate integration for semantic search. Additional database tables or infrastructure components will be introduced only when justified by concrete requirements.
 ### 6.1 PostgreSQL as the Primary Application Store
 
 PostgreSQL stores application records, workspace metadata, document metadata, extracted content, and ingestion job status.
