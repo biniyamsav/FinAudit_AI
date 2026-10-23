@@ -17,7 +17,7 @@ def test_pdf_marks_empty_text_layer_as_needs_ocr(tmp_path: Path):
     path = tmp_path / "empty.pdf"
     path.write_bytes(make_pdf(""))
     extracted = extract_pdf_text(path)
-    assert extracted.schema_version == 3
+    assert extracted.schema_version == 4
     assert extracted.pages[0].needs_ocr is True
     assert extracted.pages[0].page == 1
 

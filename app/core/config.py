@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     extraction_max_pages: int = 200
     extraction_max_rows: int = 100_000
     extraction_max_cells: int = 500_000
+    extraction_max_ocr_pages: int = 30
 
     llm_provider_mode: Literal["mock", "external"] = "mock"
     llm_api_key: SecretStr | None = None
