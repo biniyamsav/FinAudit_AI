@@ -9,17 +9,43 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from sqlalchemy.exc import IntegrityError
 from app.core.config import get_settings
 from app.db.models import Document, IngestionJob, Workspace
 from app.db.session import get_db
 
-router = APIRouter(prefix="/workspaces/{workspace_id}/documents", tags=["documents"])
+router = APIRouter(
+    prefix="/workspaces/{workspace_id}/documents",
+    tags=["documents"],
+)
 
 ALLOWED_EXTENSIONS = {
-    ".pdf", ".docx", ".xlsx", ".xls", ".csv", ".png", ".jpg", ".jpeg"
+    ".pdf", ".docx", ".xlsx", ".xls", ".csv",
+    ".png", ".jpg", ".jpeg",
 }
+
 MAX_UPLOAD_BYTES = 25 * 1024 * 1024
 CHUNK_SIZE = 1024 * 1024
+
+SIGNATURES = {
+    ".pdf": b"%PDF-",
+    ".docx": b"PK\x03\x04",
+    ".xlsx": b"PK\x03\x04",
+    ".xls": b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1",
+    ".png": b"\x89PNG\r\n\x1a\n",
+    ".jpg": b"\xff\xd8\xff",
+    ".jpeg": b"\xff\xd8\xff",
+}
+
+
+def has_valid_signature(path: Path, extension: str) -> bool:
+    with path.open("rb") as f:
+        head = f.read(16)
+
+    if extension == ".csv":
+        return b"\x00" not in head
+
+    return head.startswith(SIGNATURES[extension])
 
 
 class DocumentResponse(BaseModel):
@@ -35,7 +61,11 @@ class DocumentResponse(BaseModel):
     created_at: datetime
 
 
-@router.post("", response_model=DocumentResponse, status_code=status.HTTP_201_CREATED)
+@router.post(
+    "",
+    response_model=DocumentResponse,
+    status_code=status.HTTP_201_CREATED,
+)
 def upload_document(
     workspace_id: uuid.UUID,
     file: UploadFile,
@@ -43,44 +73,74 @@ def upload_document(
     db: Annotated[Session, Depends(get_db)],
 ) -> Document:
     workspace = db.get(Workspace, workspace_id)
+
     if (
         workspace is None
         or workspace.status != "active"
         or workspace.expires_at <= datetime.now(timezone.utc)
     ):
-        raise HTTPException(status.HTTP_404_NOT_FOUND, "Workspace not found.")
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workspace not found.",
+        )
 
     filename = Path(file.filename or "").name
-    if Path(filename).suffix.lower() not in ALLOWED_EXTENSIONS:
-        raise HTTPException(status.HTTP_415_UNSUPPORTED_MEDIA_TYPE, "Unsupported file type.")
+    extension = Path(filename).suffix.lower()
+
+    if extension not in ALLOWED_EXTENSIONS:
+        raise HTTPException(
+            status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail="Unsupported file type.",
+        )
 
     document_id = uuid.uuid4()
     folder = Path(get_settings().temp_upload_dir) / str(workspace_id)
     folder.mkdir(parents=True, exist_ok=True)
+
     path = folder / str(document_id)
 
     sha = hashlib.sha256()
     size = 0
+
     try:
         with path.open("wb") as out:
             while chunk := file.file.read(CHUNK_SIZE):
                 size += len(chunk)
+
                 if size > MAX_UPLOAD_BYTES:
-                    raise HTTPException(status.HTTP_413_REQUEST_ENTITY_TOO_LARGE, "File too large.")
+                    raise HTTPException(
+                        status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+                        detail="File too large.",
+                    )
+
                 sha.update(chunk)
                 out.write(chunk)
+
         if size == 0:
-            raise HTTPException(status.HTTP_400_BAD_REQUEST, "File is empty.")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="File is empty.",
+            )
+
+        if not has_valid_signature(path, extension):
+            raise HTTPException(
+                status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+                detail="File content does not match its type.",
+            )
+
     except Exception:
         path.unlink(missing_ok=True)
         raise
 
     checksum = sha.hexdigest()
+
     existing = db.scalars(
         select(Document).where(
-            Document.workspace_id == workspace_id, Document.checksum == checksum
+            Document.workspace_id == workspace_id,
+            Document.checksum == checksum,
         )
     ).first()
+
     if existing is not None:
         path.unlink(missing_ok=True)
         response.status_code = status.HTTP_200_OK
@@ -91,14 +151,34 @@ def upload_document(
             id=document_id,
             workspace_id=workspace_id,
             filename=filename[:255],
-            file_type=(file.content_type or "application/octet-stream")[:100],
+            file_type=(
+                file.content_type or "application/octet-stream"
+            )[:100],
             file_size=size,
             checksum=checksum,
         )
+
         db.add(document)
         db.flush()
+
         db.add(IngestionJob(document_id=document_id))
+
         db.commit()
+
+    except IntegrityError:
+        db.rollback()
+        path.unlink(missing_ok=True)
+        existing = db.scalars(
+            select(Document).where(
+                Document.workspace_id == workspace_id,
+                Document.checksum == checksum,
+            )
+        ).first()
+        if existing is None:
+            raise
+        response.status_code = status.HTTP_200_OK
+        return existing
+
     except Exception:
         db.rollback()
         path.unlink(missing_ok=True)

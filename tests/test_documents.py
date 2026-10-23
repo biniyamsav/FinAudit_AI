@@ -53,3 +53,14 @@ def test_empty_file_rejected():
 def test_unknown_workspace_returns_404():
     url = f"/api/v1/workspaces/{uuid.uuid4()}/documents"
     assert client.post(url, files=pdf()).status_code == 404
+def test_fake_pdf_rejected():
+    url = f"/api/v1/workspaces/{new_workspace()}/documents"
+    assert client.post(url, files=pdf(b"not a pdf")).status_code == 415
+
+
+def test_path_traversal_filename_is_stripped():
+    url = f"/api/v1/workspaces/{new_workspace()}/documents"
+    files = {"file": ("../../evil.pdf", b"%PDF-1.4 x", "application/pdf")}
+    response = client.post(url, files=files)
+    assert response.status_code == 201
+    assert response.json()["filename"] == "evil.pdf"
