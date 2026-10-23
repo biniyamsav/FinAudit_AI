@@ -27,6 +27,7 @@ dependencies = [
     "numpy>=1.26.0",
     "pypdfium2>=4.0.0",
     "weaviate-client>=4.9.0,<4.10.0",  # pinned to the version verified against the local 1.25.0 server (4.24.0 refuses servers <1.27)
+    "openai>=1.40.0",
 ]
 
 [project.optional-dependencies]
