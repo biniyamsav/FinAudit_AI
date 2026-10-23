@@ -7,7 +7,23 @@ from sqlalchemy import select
 from app.core.config import get_settings
 from app.db.models import Document, ExtractedContent, IngestionJob
 from app.db.session import get_session_factory
+from app.ingestion.common import ExtractionError
+from app.ingestion.csv_text import extract_csv
+from app.ingestion.docx_text import extract_docx
+from app.ingestion.excel import extract_xls, extract_xlsx
+from app.ingestion.ocr import extract_ocr
 from app.ingestion.pdf_text import extract_pdf_text
+
+EXTRACTORS = {
+    ".pdf": extract_pdf_text,
+    ".xlsx": extract_xlsx,
+    ".xls": extract_xls,
+    ".csv": extract_csv,
+    ".docx": extract_docx,
+    ".png": extract_ocr,
+    ".jpg": extract_ocr,
+    ".jpeg": extract_ocr,
+}
 
 
 def _now() -> datetime:
@@ -40,9 +56,10 @@ def process_document(document_id: uuid.UUID) -> None:
         db.commit()
 
         try:
-            if Path(document.filename).suffix.lower() != ".pdf":
-                raise ValueError("unsupported_type")
-            extracted = extract_pdf_text(path)
+            extractor = EXTRACTORS.get(Path(document.filename).suffix.lower())
+            if extractor is None:
+                raise ExtractionError("unsupported_type")
+            extracted = extractor(path)
             db.add(
                 ExtractedContent(
                     document_id=document.id, content=extracted.model_dump()
@@ -56,8 +73,8 @@ def process_document(document_id: uuid.UUID) -> None:
             db.rollback()
             job.status = "failed"
             job.error_code = (
-                "unsupported_type"
-                if str(error) == "unsupported_type"
+                error.code
+                if isinstance(error, ExtractionError)
                 else "extraction_failed"
             )
             job.completed_at = _now()

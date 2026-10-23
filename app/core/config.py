@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     temp_upload_dir: str = "./temporary_uploads"
     workspace_ttl_hours: int = 24
 
+    extraction_max_pages: int = 200
+    extraction_max_rows: int = 100_000
+    extraction_max_cells: int = 500_000
+
     llm_provider_mode: Literal["mock", "external"] = "mock"
     llm_api_key: SecretStr | None = None
 
