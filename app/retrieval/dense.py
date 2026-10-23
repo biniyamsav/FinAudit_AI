@@ -1,11 +1,14 @@
 import weaviate
 from typing import List, Dict, Any
-from app.core.config import settings
 
-def get_weaviate_client():
-    """Initializes and returns the Weaviate v4 client."""
-    # Connects to your local or cloud Weaviate instance via settings
-    return weaviate.connect_to_local() # or connect_to_custom() based on your env config
+def get_weaviate_client() -> weaviate.Client:
+    """Connects to the local Weaviate instance running via Docker."""
+    client = weaviate.connect_to_local(
+        host="localhost",
+        port=8080,
+        grpc_port=50051
+    )
+    return client
 
 def store_chunks_in_weaviate(client: weaviate.Client, chunks: List[Any]):
     """
