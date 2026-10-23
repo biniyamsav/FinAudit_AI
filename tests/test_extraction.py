@@ -8,7 +8,7 @@ from app.core.config import get_settings
 from app.ingestion.common import ExtractionError
 from app.ingestion.csv_text import extract_csv
 from app.ingestion.docx_text import extract_docx
-from app.ingestion.excel import extract_xlsx
+from app.ingestion.excel import extract_xls, extract_xlsx
 from app.ingestion.pdf_text import extract_pdf_text
 from tests.test_worker import make_pdf
 
@@ -100,6 +100,25 @@ def test_docx_uses_paragraph_index_and_tables(tmp_path: Path):
     assert extracted.tables[0].rows[0] == ["Item", "1000"]
     assert extracted.tables[0].rows[1][1] == "150"
     assert isinstance(extracted.tables[0].rows[1][1], str)
+
+
+def test_xls_extracts_cells(tmp_path: Path):
+    try:
+        import xlwt
+    except ImportError:
+        pytest.skip("xlwt is not installed, so a .xls fixture cannot be generated")
+
+    path = tmp_path / "legacy.xls"
+    book = xlwt.Workbook()
+    sheet = book.add_sheet("Summary")
+    sheet.write(0, 1, "Revenue 1500")  # B1
+    book.save(str(path))
+
+    extracted = extract_xls(path)
+    by_ref = {(cell.sheet, cell.cell): cell for cell in extracted.cells}
+    assert extracted.schema_version == 1
+    assert ("Summary", "B1") in by_ref
+    assert by_ref[("Summary", "B1")].value == "Revenue 1500"
 
 
 def _two_page_pdf() -> bytes:

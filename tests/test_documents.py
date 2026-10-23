@@ -1,7 +1,9 @@
 import uuid
+from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from app.core.config import get_settings
 from app.main import app
 
 client = TestClient(app)
@@ -64,3 +66,14 @@ def test_path_traversal_filename_is_stripped():
     response = client.post(url, files=files)
     assert response.status_code == 201
     assert response.json()["filename"] == "evil.pdf"
+
+
+def test_oversize_upload_rejected_and_temp_file_removed():
+    workspace_id = new_workspace()
+    url = f"/api/v1/workspaces/{workspace_id}/documents"
+    # 25 MB + 1 byte, starting with the PDF signature
+    payload = b"%PDF-" + b"a" * (25 * 1024 * 1024 + 1 - 5)
+    assert client.post(url, files=pdf(payload)).status_code == 413
+    folder = Path(get_settings().temp_upload_dir) / workspace_id
+    leftovers = list(folder.iterdir()) if folder.exists() else []
+    assert leftovers == []
