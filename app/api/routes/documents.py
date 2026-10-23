@@ -4,7 +4,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, Response, UploadFile, status
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Response,
+    UploadFile,
+    status,
+)
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -13,6 +21,8 @@ from sqlalchemy.exc import IntegrityError
 from app.core.config import get_settings
 from app.db.models import Document, IngestionJob, Workspace
 from app.db.session import get_db
+from app.workers.ingestion_worker import process_document
+
 
 router = APIRouter(
     prefix="/workspaces/{workspace_id}/documents",
@@ -70,6 +80,7 @@ def upload_document(
     workspace_id: uuid.UUID,
     file: UploadFile,
     response: Response,
+    background_tasks: BackgroundTasks,
     db: Annotated[Session, Depends(get_db)],
 ) -> Document:
     workspace = db.get(Workspace, workspace_id)
@@ -185,4 +196,5 @@ def upload_document(
         raise
 
     db.refresh(document)
+    background_tasks.add_task(process_document, document.id)
     return document
