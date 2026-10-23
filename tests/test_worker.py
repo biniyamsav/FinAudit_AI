@@ -160,5 +160,5 @@ def test_worker_keeps_temp_file_when_ocr_is_required():
         ).one()
         assert document.status == "failed"
         assert job.status == "failed"
-        assert job.error_code == "ocr_required"
+        assert job.error_code == "no_text_found"
     assert temp_file.exists()
