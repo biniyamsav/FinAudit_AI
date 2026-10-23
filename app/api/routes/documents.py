@@ -16,6 +16,7 @@ from fastapi import (
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from app.db.models import Document, ExtractedContent, IngestionJob, Workspace
 
 from sqlalchemy.exc import IntegrityError
 from app.core.config import get_settings
@@ -198,3 +199,19 @@ def upload_document(
     db.refresh(document)
     background_tasks.add_task(process_document, document.id)
     return document
+
+@router.get("/{document_id}/content")
+def get_document_content(
+    workspace_id: uuid.UUID,
+    document_id: uuid.UUID,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    document = db.get(Document, document_id)
+    if document is None or document.workspace_id != workspace_id:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found.")
+    if document.status != "ready":
+        raise HTTPException(status.HTTP_409_CONFLICT, f"Document is {document.status}.")
+    row = db.scalars(
+        select(ExtractedContent).where(ExtractedContent.document_id == document_id)
+    ).one()
+    return row.content
