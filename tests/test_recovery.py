@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
-from sqlalchemy import delete
+from sqlalchemy import delete, select
 
 from app.core.config import get_settings
 from app.db.models import Document, IngestionJob, Workspace
@@ -16,6 +16,15 @@ from app.workers import ingestion_worker
 
 def _now() -> datetime:
     return datetime.now(timezone.utc)
+
+
+def _read(document_id: uuid.UUID) -> tuple[str, str, int, str | None]:
+    with get_session_factory()() as db:
+        document = db.get(Document, document_id)
+        job = db.scalars(
+            select(IngestionJob).where(IngestionJob.document_id == document_id)
+        ).one()
+        return document.status, job.status, job.attempt_count, job.error_code
 
 
 @pytest.fixture(autouse=True)
@@ -75,7 +84,8 @@ def seed():
                 path.write_bytes(b"revenue")
                 temp_paths.append(path)
             workspaces.append(workspace.id)
-            return document.id
+            document_id = document.id
+        return document_id
 
     yield _seed
 
@@ -88,22 +98,111 @@ def seed():
 
 
 @pytest.fixture
-def recorder(monkeypatch):
+def reprocessed(monkeypatch):
     calls: list[uuid.UUID] = []
 
     def _fake_process_document(document_id: uuid.UUID) -> None:
         calls.append(document_id)
 
-    monkeypatch.setattr(
-        ingestion_worker, "process_document", _fake_process_document
-    )
+    monkeypatch.setattr(ingestion_worker, "process_document", _fake_process_document)
     return calls
 
 
-def read(document_id: uuid.UUID) -> tuple[str, str, int, str | None]:
-    with get_session_factory()() as db:
-        document = db.get(Document, document_id)
-        job = db.scalars(
-            delete().where  # placeholder
-        ).first() if False else None
-        return document.status, job.status, job.attempt_count, job.error_code
+def test_stale_processing_document_with_temp_file_is_requeued_and_reprocessed(seed, reprocessed):
+    document_id = seed(
+        document_status="processing",
+        job_status="running",
+        started_at=_now() - timedelta(minutes=30),
+        attempt_count=1,
+        with_temp_file=True,
+    )
+
+    assert ingestion_worker.recover_stale_documents() == [document_id]
+    assert reprocessed == [document_id]
+    assert _read(document_id) == ("uploaded", "queued", 1, None)
+
+
+def test_stale_processing_document_without_temp_file_fails(seed, reprocessed):
+    document_id = seed(
+        document_status="processing",
+        job_status="running",
+        started_at=_now() - timedelta(minutes=30),
+        attempt_count=1,
+    )
+
+    assert ingestion_worker.recover_stale_documents() == []
+    assert reprocessed == []
+    assert _read(document_id) == ("failed", "failed", 1, "temp_file_missing")
+
+
+def test_fresh_processing_document_is_untouched(seed, reprocessed):
+    document_id = seed(
+        document_status="processing",
+        job_status="running",
+        started_at=_now() - timedelta(minutes=1),
+        attempt_count=1,
+        with_temp_file=True,
+    )
+
+    assert ingestion_worker.recover_stale_documents() == []
+    assert reprocessed == []
+    assert _read(document_id) == ("processing", "running", 1, None)
+
+
+def test_processing_document_without_started_at_is_untouched(seed, reprocessed):
+    document_id = seed(
+        document_status="processing",
+        job_status="running",
+        started_at=None,
+        attempt_count=1,
+        with_temp_file=True,
+    )
+
+    assert ingestion_worker.recover_stale_documents() == []
+    assert reprocessed == []
+    assert _read(document_id) == ("processing", "running", 1, None)
+
+
+def test_ready_and_failed_documents_are_untouched(seed, reprocessed):
+    ready_id = seed(
+        document_status="ready",
+        job_status="succeeded",
+        started_at=_now() - timedelta(minutes=30),
+        attempt_count=1,
+    )
+    failed_id = seed(
+        document_status="failed",
+        job_status="failed",
+        started_at=_now() - timedelta(minutes=30),
+        attempt_count=1,
+        error_code="extraction_failed",
+    )
+
+    assert ingestion_worker.recover_stale_documents() == []
+    assert reprocessed == []
+    assert _read(ready_id) == ("ready", "succeeded", 1, None)
+    assert _read(failed_id) == ("failed", "failed", 1, "extraction_failed")
+
+
+def test_stale_document_at_max_attempts_is_failed_without_requeue(seed, reprocessed):
+    document_id = seed(
+        document_status="processing",
+        job_status="running",
+        started_at=_now() - timedelta(minutes=30),
+        attempt_count=3,
+        with_temp_file=True,
+    )
+
+    assert ingestion_worker.recover_stale_documents() == []
+    assert reprocessed == []
+    assert _read(document_id) == ("failed", "failed", 3, "max_attempts_exceeded")
+
+
+def test_recovery_failure_does_not_stop_app_startup(monkeypatch):
+    def _boom() -> list[uuid.UUID]:
+        raise RuntimeError("recovery failed")
+
+    monkeypatch.setattr("app.main.recover_stale_documents", _boom)
+
+    with TestClient(create_app()) as client:
+        assert client.get("/api/v1/health").status_code == 200
