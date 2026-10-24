@@ -1,4 +1,5 @@
-import hashlib
+import time
+import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -9,12 +10,13 @@ from fastapi import (
     BackgroundTasks,
     Depends,
     HTTPException,
+    Request,
     Response,
     UploadFile,
     status,
 )
 from pydantic import BaseModel, ConfigDict
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 from app.db.models import Document, ExtractedContent, IngestionJob, Workspace
 
@@ -25,6 +27,21 @@ from app.db.session import get_db
 from app.workers.ingestion_worker import process_document
 
 
+_rate_limit_lock = threading.Lock()
+_rate_limit_buckets: dict = {}
+
+
+def _check_rate_limit(key: str, limit: int) -> int | None:
+    now = time.time()
+    window = 60.0
+    with _rate_limit_lock:
+        bucket = _rate_limit_buckets.setdefault(key, [])
+        bucket[:] = [t for t in bucket if now - t < window]
+        if len(bucket) >= limit:
+            retry_after = int(window - (now - bucket[0])) + 1
+            return max(1, retry_after)
+        bucket.append(now)
+        return None
 router = APIRouter(
     prefix="/workspaces/{workspace_id}/documents",
     tags=["documents"],
@@ -80,6 +97,7 @@ class DocumentResponse(BaseModel):
 def upload_document(
     workspace_id: uuid.UUID,
     file: UploadFile,
+    request: Request,
     response: Response,
     background_tasks: BackgroundTasks,
     db: Annotated[Session, Depends(get_db)],
@@ -94,6 +112,29 @@ def upload_document(
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Workspace not found.",
+        )
+
+    settings = get_settings()
+    client_ip = request.client.host if request.client else "unknown"
+    retry_after = _check_rate_limit(
+        f"{workspace_id}:{client_ip}", settings.upload_rate_limit_per_minute
+    )
+    if retry_after is not None:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
+    count = db.scalar(
+        select(func.count()).select_from(Document).where(
+            Document.workspace_id == workspace_id
+        )
+    )
+    if count is not None and count >= settings.max_documents_per_workspace:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Document limit reached.",
         )
 
     filename = Path(file.filename or "").name
@@ -145,6 +186,18 @@ def upload_document(
         raise
 
     checksum = sha.hexdigest()
+
+    existing_size = db.scalar(
+        select(func.coalesce(func.sum(Document.file_size), 0)).where(
+            Document.workspace_id == workspace_id
+        )
+    ) or 0
+    if existing_size + size > settings.max_workspace_bytes:
+        path.unlink(missing_ok=True)
+        raise HTTPException(
+            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            detail="Workspace storage limit reached.",
+        )
 
     existing = db.scalars(
         select(Document).where(

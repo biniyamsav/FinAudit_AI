@@ -24,6 +24,10 @@ class Settings(BaseSettings):
     temp_upload_dir: str = "./temporary_uploads"
     workspace_ttl_hours: int = 24
     processing_stale_minutes: int = 15
+    max_documents_per_workspace: int = 20
+    max_workspace_bytes: int = 200_000_000
+    extraction_timeout_seconds: int = 300
+    upload_rate_limit_per_minute: int = 20
     cleanup_interval_minutes: int = 30
 
     extraction_max_pages: int = 200

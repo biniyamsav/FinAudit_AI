@@ -1,4 +1,5 @@
 import uuid
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FutureTimeoutError
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -104,7 +105,20 @@ def process_document(document_id: uuid.UUID) -> None:
             extractor = EXTRACTORS.get(Path(document.filename).suffix.lower())
             if extractor is None:
                 raise ExtractionError("unsupported_type")
-            extracted = extractor(path)
+            timeout = get_settings().extraction_timeout_seconds
+            # Python cannot kill a hung thread; we only stop waiting for it.
+            # The thread may keep running in the background.
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(extractor, path)
+                try:
+                    extracted = future.result(timeout=timeout)
+                except FutureTimeoutError:
+                    job.status = "failed"
+                    job.error_code = "extraction_timeout"
+                    job.completed_at = _now()
+                    document.status = "failed"
+                    db.commit()
+                    return
             content = extracted.model_dump()
 
             # Index before committing so "ready" always implies
