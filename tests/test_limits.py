@@ -13,6 +13,7 @@ from app.main import app
 from app.workers import ingestion_worker
 from sqlalchemy import select
 from app.db.models import IngestionJob
+from app.core.rate_limit import reset_rate_limits
 
 client = TestClient(app)
 REAL_PROCESS_DOCUMENT = ingestion_worker.process_document
@@ -21,14 +22,14 @@ REAL_PROCESS_DOCUMENT = ingestion_worker.process_document
 @pytest.fixture(autouse=True)
 def reset_state(monkeypatch):
     get_settings.cache_clear()
-    docs_mod._rate_limit_buckets.clear()
+    reset_rate_limits()
     monkeypatch.setattr(ingestion_worker, "process_document", lambda *a, **k: None)
     import app.api.routes.documents as d
 
     monkeypatch.setattr(d, "process_document", lambda *a, **k: None)
     yield
     get_settings.cache_clear()
-    docs_mod._rate_limit_buckets.clear()
+    reset_rate_limits()
 
 
 def _ws():

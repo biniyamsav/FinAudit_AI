@@ -3,6 +3,10 @@ import logging
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 
+from dotenv import load_dotenv
+
+load_dotenv(override=False)
+
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
@@ -20,6 +24,13 @@ ALLOWED_ORIGINS = [
     "http://127.0.0.1:3000",
 ]
 
+
+from dotenv import load_dotenv
+load_dotenv(override=False)
+
+from pathlib import Path
+
+...
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
@@ -54,15 +65,23 @@ def create_app() -> FastAPI:
 
     register_error_handlers(app)
 
+    origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
+    allow_credentials = "*" not in origins
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=ALLOWED_ORIGINS,
-        allow_credentials=True,
+        allow_origins=origins,
+        allow_credentials=allow_credentials,
         allow_methods=["*"],
         allow_headers=["*"],
     )
 
     app.include_router(api_router, prefix=settings.api_v1_prefix)
+
+    ui_dir = Path(__file__).resolve().parent.parent / "ui"
+    if ui_dir.is_dir() and (ui_dir / "index.html").is_file():
+        from fastapi.staticfiles import StaticFiles
+
+        app.mount("/", StaticFiles(directory=str(ui_dir), html=True), name="ui")
 
     return app
 

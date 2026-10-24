@@ -1,5 +1,3 @@
-import time
-import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
@@ -28,21 +26,7 @@ from app.db.session import get_db
 from app.workers.ingestion_worker import process_document
 
 
-_rate_limit_lock = threading.Lock()
-_rate_limit_buckets: dict = {}
-
-
-def _check_rate_limit(key: str, limit: int) -> int | None:
-    now = time.time()
-    window = 60.0
-    with _rate_limit_lock:
-        bucket = _rate_limit_buckets.setdefault(key, [])
-        bucket[:] = [t for t in bucket if now - t < window]
-        if len(bucket) >= limit:
-            retry_after = int(window - (now - bucket[0])) + 1
-            return max(1, retry_after)
-        bucket.append(now)
-        return None
+from app.core.rate_limit import check_rate_limit
 router = APIRouter(
     prefix="/workspaces/{workspace_id}/documents",
     tags=["documents"],
@@ -117,7 +101,7 @@ def upload_document(
 
     settings = get_settings()
     client_ip = request.client.host if request.client else "unknown"
-    retry_after = _check_rate_limit(
+    retry_after = check_rate_limit(
         f"{workspace_id}:{client_ip}", settings.upload_rate_limit_per_minute
     )
     if retry_after is not None:

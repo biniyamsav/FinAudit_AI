@@ -5,7 +5,7 @@ from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -119,7 +119,8 @@ def _document_names(
 @router.post("", response_model=ChatResponse)
 def create_chat(
     workspace_id: uuid.UUID,
-    request: ChatRequest,
+    request: Request,
+    payload: ChatRequest,
     db: Annotated[Session, Depends(get_db)],
     provider_factory: Annotated[
         Callable[[], LLMProviderProtocol], Depends(get_llm_provider_factory)
@@ -130,6 +131,21 @@ def create_chat(
     Pipeline: validate workspace -> hybrid search (workspace-scoped) ->
     rerank/dedupe -> assemble cited context -> Groq -> persist the exchange.
     """
+    from app.core.config import get_settings
+    from app.core.rate_limit import check_rate_limit
+
+    settings = get_settings()
+    client_ip = request.client.host if request.client else "unknown"
+    retry_after = check_rate_limit(
+        f"chat:{workspace_id}:{client_ip}", settings.chat_rate_limit_per_minute
+    )
+    if retry_after is not None:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail="Too many requests.",
+            headers={"Retry-After": str(retry_after)},
+        )
+
     _active_workspace(db, workspace_id)
 
     has_document = db.scalars(
@@ -143,16 +159,16 @@ def create_chat(
             detail="No documents found in this workspace.",
         )
 
-    query_vector = embed_text(request.query)
+    query_vector = embed_text(payload.query)
     try:
         client = get_weaviate_client()
         try:
             candidates = hybrid_search(
                 client,
                 str(workspace_id),
-                request.query,
+                payload.query,
                 query_vector,
-                limit=request.limit,
+                limit=payload.limit,
             )
         finally:
             client.close()
@@ -162,7 +178,7 @@ def create_chat(
             detail="Document retrieval is unavailable.",
         ) from error
 
-    ranked = rerank_chunks(candidates, top_k=request.limit)
+    ranked = rerank_chunks(candidates, top_k=payload.limit)
 
     names = _document_names(db, workspace_id, {c.get("document_id") for c in ranked})
     citations: list[Citation] = []
@@ -182,7 +198,7 @@ def create_chat(
         )
 
     context = build_rag_context(ranked)
-    user_prompt = f"{context}\n\n## Question\n{request.query}"
+    user_prompt = f"{context}\n\n## Question\n{payload.query}"
 
     try:
         llm = provider_factory()

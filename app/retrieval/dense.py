@@ -3,14 +3,20 @@ from typing import List, Dict, Any
 
 import weaviate
 
+from app.core.config import get_settings
+
 from app.retrieval.embeddings import embed_text
 
+
 def get_weaviate_client() -> weaviate.Client:
-    """Connects to the local Weaviate instance running via Docker."""
+    settings = get_settings()
+    if settings.weaviate_secure:
+        # not fully implemented; default false
+        pass
     client = weaviate.connect_to_local(
-        host="localhost",
-        port=8080,
-        grpc_port=50051
+        host=settings.weaviate_host,
+        port=settings.weaviate_http_port,
+        grpc_port=settings.weaviate_grpc_port,
     )
     return client
 

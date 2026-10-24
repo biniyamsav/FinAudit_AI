@@ -3,17 +3,11 @@ from datetime import datetime
 
 from sqlalchemy import DateTime, String, func
 from sqlalchemy.orm import Mapped, mapped_column
-from sqlalchemy import DateTime, ForeignKey, String, func
-from sqlalchemy import BigInteger, DateTime, ForeignKey, String, UniqueConstraint, func
+from sqlalchemy import ForeignKey
+from sqlalchemy import BigInteger, UniqueConstraint
 from sqlalchemy import (
-    BigInteger,
-    DateTime,
-    ForeignKey,
     Integer,
-    String,
     Text,
-    UniqueConstraint,
-    func,
 )
 from typing import Any
 

@@ -29,6 +29,18 @@ class Settings(BaseSettings):
     extraction_timeout_seconds: int = 300
     upload_rate_limit_per_minute: int = 20
     cleanup_interval_minutes: int = 30
+    chat_rate_limit_per_minute: int = 10
+    cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
+    weaviate_host: str = "localhost"
+    weaviate_http_port: int = 8080
+    weaviate_grpc_port: int = 50051
+    weaviate_secure: bool = False
+    weaviate_api_key: SecretStr | None = None
+    max_documents_per_workspace: int = 20
+    max_workspace_bytes: int = 200_000_000
+    extraction_timeout_seconds: int = 300
+    upload_rate_limit_per_minute: int = 20
+    cleanup_interval_minutes: int = 30
 
     extraction_max_pages: int = 200
     extraction_max_rows: int = 100_000
@@ -39,13 +51,13 @@ class Settings(BaseSettings):
     llm_api_key: SecretStr | None = None
 
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
-    def validate_for_startup(self) -> None:
-        """Validate settings required to start the application."""
 
-        if self.environment == "production" and self.database_url is None:
-            raise ValueError(
-                "DATABASE_URL is required when ENVIRONMENT is production."
-            )
+    def validate_for_startup(self) -> None:
+        if self.environment == "production":
+            if self.database_url is None:
+                raise ValueError("DATABASE_URL is required in production.")
+            if self.llm_api_key is None:
+                raise ValueError("GROQ_API_KEY is required in production.")
 
 
 @lru_cache
