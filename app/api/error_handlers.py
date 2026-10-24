@@ -4,6 +4,8 @@ import logging
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 
+from app.core.config import get_settings
+
 logger = logging.getLogger(__name__)
 
 
@@ -22,12 +24,12 @@ def register_error_handlers(app: FastAPI) -> None:
             exc_info=(type(exc), exc, exc.__traceback__),
         )
 
+        settings = get_settings()
+        if settings.debug:
+            raise exc
+
         return JSONResponse(
             status_code=500,
-            content={
-                "error": {
-                    "code": "INTERNAL_SERVER_ERROR",
-                    "message": "An unexpected error occurred.",
-                }
-            },
+            content={"detail": "Internal server error."},
         )
+

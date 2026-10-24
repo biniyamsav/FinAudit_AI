@@ -23,7 +23,7 @@ def create_app() -> FastAPI:
         title="FinAudit_AI",
         description="Financial Knowledge Graph & Compliance Audit Engine",
         version="0.1.0",
-        debug=settings.environment == "development",
+        debug=settings.debug,
     )
 
     register_error_handlers(app)
