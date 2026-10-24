@@ -275,6 +275,16 @@ def get_document_content(
     document_id: uuid.UUID,
     db: Annotated[Session, Depends(get_db)],
 ) -> dict:
+    workspace = db.get(Workspace, workspace_id)
+    if (
+        workspace is None
+        or workspace.status != "active"
+        or workspace.expires_at <= datetime.now(timezone.utc)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workspace not found.",
+        )
     document = db.get(Document, document_id)
     if document is None or document.workspace_id != workspace_id:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Document not found.")
