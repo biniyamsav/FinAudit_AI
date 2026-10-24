@@ -1,5 +1,5 @@
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import select
@@ -127,3 +127,53 @@ def process_document(document_id: uuid.UUID) -> None:
             return
 
         path.unlink(missing_ok=True)
+
+
+def recover_stale_documents() -> list[uuid.UUID]:
+    """Requeue documents a dead worker left in "processing"."""
+
+    settings = get_settings()
+    threshold = _now() - timedelta(minutes=settings.processing_stale_minutes)
+    requeued: list[uuid.UUID] = []
+
+    with get_session_factory()() as db:
+        documents = db.scalars(
+            select(Document).where(Document.status == "processing")
+        ).all()
+
+        for document in documents:
+            job = db.scalars(
+                select(IngestionJob)
+                .where(IngestionJob.document_id == document.id)
+                .order_by(IngestionJob.created_at.desc())
+            ).first()
+            if job is None or job.started_at is None or job.started_at > threshold:
+                continue
+
+            path = (
+                Path(settings.temp_upload_dir)
+                / str(document.workspace_id)
+                / str(document.id)
+            )
+
+            if job.attempt_count >= 3:
+                document.status = "failed"
+                job.status = "failed"
+                job.error_code = "max_attempts_exceeded"
+                db.commit()
+            elif not path.exists():
+                document.status = "failed"
+                job.status = "failed"
+                job.error_code = "temp_file_missing"
+                db.commit()
+            else:
+                document.status = "uploaded"
+                job.status = "queued"
+                job.error_code = None
+                db.commit()
+                requeued.append(document.id)
+
+    for document_id in requeued:
+        process_document(document_id)
+
+    return requeued

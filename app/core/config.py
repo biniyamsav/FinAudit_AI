@@ -23,6 +23,7 @@ class Settings(BaseSettings):
 
     temp_upload_dir: str = "./temporary_uploads"
     workspace_ttl_hours: int = 24
+    processing_stale_minutes: int = 15
 
     extraction_max_pages: int = 200
     extraction_max_rows: int = 100_000
