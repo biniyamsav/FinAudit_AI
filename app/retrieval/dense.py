@@ -1,5 +1,9 @@
-import weaviate
+import uuid
 from typing import List, Dict, Any
+
+import weaviate
+
+from app.retrieval.embeddings import embed_text
 
 def get_weaviate_client() -> weaviate.Client:
     """Connects to the local Weaviate instance running via Docker."""
@@ -18,15 +22,32 @@ def store_chunks_in_weaviate(client: weaviate.Client, chunks: List[Any]):
     
     with collection.batch.dynamic() as batch:
         for chunk in chunks:
+            # Deterministic uuid5 from the chunk id makes indexing idempotent:
+            # a retried job overwrites the same object instead of creating a
+            # duplicate chunk that would skew retrieval scores.
             batch.add_object(
+                uuid=uuid.uuid5(uuid.NAMESPACE_URL, str(chunk.chunk_id)),
                 properties={
                     "chunk_id": chunk.chunk_id,
                     "document_id": chunk.document_id,
                     "workspace_id": chunk.workspace_id,
                     "text": chunk.text,
                     "provenance": str(chunk.provenance)
-                }
+                },
+                # Weaviate runs with vectorizer='none', so vectors must be
+                # supplied here -- and from the same embedder used at query
+                # time, or the two spaces would not be comparable.
+                vector=embed_text(chunk.text),
             )
+
+    # Weaviate's v4 batch API does NOT raise when objects are rejected -- it
+    # only records them.  Surfacing them here is what lets the worker fail a
+    # document instead of marking it ready while it is silently unsearchable.
+    failures = list(collection.batch.failed_objects)
+    if failures:
+        raise RuntimeError(
+            f"failed to index {len(failures)} chunk(s) into Weaviate"
+        )
 
 def search_workspace_vectors(
     client: weaviate.Client, 

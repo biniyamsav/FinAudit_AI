@@ -30,7 +30,9 @@ def chunk_document(document_id: str, workspace_id: str, file_type: str, content:
             
             # Chunk tables if present
             for idx, table in enumerate(tables):
-                table_str = "\n".join(["\t".join(row) for row in table.get("rows", [])])
+                # extract_pdf_text yields tables as list[list[list[str]]]:
+                # a list of row lists, each row a list of cell strings.
+                table_str = "\n".join("\t".join(row) for row in table)
                 if table_str.strip():
                     chunks.append(Chunk(
                         chunk_id=f"{document_id}_p{page_num}_table_{idx}",
@@ -72,13 +74,21 @@ def chunk_document(document_id: str, workspace_id: str, file_type: str, content:
 
     elif file_type in [".csv", "csv"]:
         rows = content.get("rows", [])
-        row_lines = [f"Row {r.get('row')}: {r.get('data')}" for r in rows]
-        chunks.append(Chunk(
-            chunk_id=f"{document_id}_csv_data",
-            document_id=document_id,
-            workspace_id=workspace_id,
-            text="\n".join(row_lines),
-            provenance={"source_type": "csv"}
-        ))
+        # extract_csv yields {"row": int, "values": [...]} per line.
+        row_lines = [
+            f"Row {r.get('row')}: " + ", ".join(r.get("values", []) or [])
+            for r in rows
+        ]
+        csv_text = "\n".join(row_lines)
+        if csv_text.strip():
+            chunks.append(
+                Chunk(
+                    chunk_id=f"{document_id}_csv_data",
+                    document_id=document_id,
+                    workspace_id=workspace_id,
+                    text=csv_text,
+                    provenance={"source_type": "csv"}
+                )
+            )
 
     return chunks

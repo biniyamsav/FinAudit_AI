@@ -11,6 +11,7 @@ from sqlalchemy import (
     ForeignKey,
     Integer,
     String,
+    Text,
     UniqueConstraint,
     func,
 )
@@ -86,4 +87,28 @@ class ExtractedContent(Base):
     )
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
+class ConversationMessage(Base):
+    """One chat exchange, persisted so an answer can be reproduced later.
+
+    The full prompts are stored alongside the response because an audit
+    answer is only defensible if the exact text that produced it can be
+    re-run.  ``cited_chunk_ids`` records which retrieved chunks grounded the
+    answer, tying it back to ``documents``/``extracted_content`` provenance.
+    """
+
+    __tablename__ = "conversation_messages"
+
+    id: Mapped[uuid.UUID] = mapped_column(primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(
+        ForeignKey("workspaces.id", ondelete="CASCADE")
+    )
+    system_prompt: Mapped[str] = mapped_column(Text)
+    user_prompt: Mapped[str] = mapped_column(Text)
+    response: Mapped[str] = mapped_column(Text)
+    cited_chunk_ids: Mapped[list[Any]] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
     )
