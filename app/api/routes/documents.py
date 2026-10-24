@@ -200,6 +200,75 @@ def upload_document(
     background_tasks.add_task(process_document, document.id)
     return document
 
+@router.post(
+    "/{document_id}/retry",
+    status_code=status.HTTP_202_ACCEPTED,
+)
+def retry_document(
+    workspace_id: uuid.UUID,
+    document_id: uuid.UUID,
+    background_tasks: BackgroundTasks,
+    db: Annotated[Session, Depends(get_db)],
+) -> dict:
+    workspace = db.get(Workspace, workspace_id)
+
+    if (
+        workspace is None
+        or workspace.status != "active"
+        or workspace.expires_at <= datetime.now(timezone.utc)
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Workspace not found.",
+        )
+
+    document = db.get(Document, document_id)
+    if document is None or document.workspace_id != workspace_id:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Document not found.",
+        )
+
+    if document.status != "failed":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Document is not in a failed state.",
+        )
+
+    job = db.scalars(
+        select(IngestionJob)
+        .where(IngestionJob.document_id == document_id)
+        .order_by(IngestionJob.created_at.desc())
+    ).first()
+
+    if job is not None and job.attempt_count >= 3:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Maximum attempts reached.",
+        )
+
+    path = (
+        Path(get_settings().temp_upload_dir)
+        / str(workspace_id)
+        / str(document_id)
+    )
+    if not path.exists():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Original upload is no longer available.",
+        )
+
+    document.status = "uploaded"
+    if job is not None:
+        job.status = "queued"
+        job.error_code = None
+        job.completed_at = None
+    db.commit()
+
+    background_tasks.add_task(process_document, document.id)
+    return {"id": str(document.id), "status": "uploaded"}
+
+
 @router.get("/{document_id}/content")
 def get_document_content(
     workspace_id: uuid.UUID,
