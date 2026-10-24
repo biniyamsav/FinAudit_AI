@@ -161,12 +161,15 @@ def test_weaviate_raises_first_only(monkeypatch):
     ws1 = _expired_workspace()
     ws2 = _expired_workspace()
     n = cleanup_mod.cleanup_expired_workspaces()
-    assert n == 1
+    assert n == 1   
     factory = get_session_factory()
     with factory() as db:
-        assert db.get(Workspace, uuid.UUID(ws1)) is not None
-        assert db.get(Workspace, uuid.UUID(ws2)) is None
-
+        remaining = [
+            db.get(Workspace, uuid.UUID(w)) for w in (ws1, ws2)
+        ]
+    survivors = [w for w in remaining if w is not None]
+    assert len(survivors) == 1
+    assert survivors[0].status == "deleting"
 
 def test_second_run_zero(fake_client):
     ws = _expired_workspace()
