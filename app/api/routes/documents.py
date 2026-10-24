@@ -3,6 +3,8 @@ import threading
 import uuid
 from datetime import datetime, timezone
 from pathlib import Path
+import hashlib
+from app.db.models import Document, IngestionJob, Workspace
 from typing import Annotated
 
 from fastapi import (
@@ -18,11 +20,10 @@ from fastapi import (
 from pydantic import BaseModel, ConfigDict
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
-from app.db.models import Document, ExtractedContent, IngestionJob, Workspace
+from app.db.models import ExtractedContent
 
 from sqlalchemy.exc import IntegrityError
 from app.core.config import get_settings
-from app.db.models import Document, IngestionJob, Workspace
 from app.db.session import get_db
 from app.workers.ingestion_worker import process_document
 

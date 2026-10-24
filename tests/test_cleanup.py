@@ -7,7 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app.core.config import get_settings
-from app.db.models import Document, Workspace
+from app.db.models import Workspace
 from app.db.session import get_session_factory
 from app.main import app
 from app.workers import cleanup as cleanup_mod
@@ -16,26 +16,28 @@ client = TestClient(app)
 
 
 class FakeCollection:
-    def __init__(self, raise_on_delete=False):
-        self.raise_on_delete = raise_on_delete
-        self.deleted = False
+    def __init__(self, raise_for=None):
+        self.raise_for = raise_for or set()
 
     @property
     def data(self):
         return self
 
     def delete_many(self, where=None):
-        if self.raise_on_delete:
+        # where not inspected; raise based on a global flag set per test
+        if getattr(self, "_raise", False):
             raise RuntimeError("weaviate boom")
-        self.deleted = True
+        return None
 
 
 class FakeClient:
-    def __init__(self, raise_on_delete=False):
-        self._coll = FakeCollection(raise_on_delete=raise_on_delete)
+    def __init__(self):
+        self._coll = FakeCollection()
         self.collections = self
+        self._raise = False
 
     def get(self, name):
+        self._coll._raise = self._raise
         return self._coll
 
     def close(self):
@@ -43,12 +45,35 @@ class FakeClient:
 
 
 @pytest.fixture(autouse=True)
-def stub_weaviate(monkeypatch):
-    def factory(raise_on_delete=False):
-        return lambda: FakeClient(raise_on_delete=raise_on_delete)
+def clean_db_and_temp():
+    factory = get_session_factory()
+    with factory() as db:
+        db.query(Workspace).delete()
+        db.commit()
+    tmp = Path(get_settings().temp_upload_dir)
+    if tmp.exists():
+        for child in tmp.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                child.unlink(missing_ok=True)
+    yield
+    with factory() as db:
+        db.query(Workspace).delete()
+        db.commit()
+    if tmp.exists():
+        for child in tmp.iterdir():
+            if child.is_dir():
+                shutil.rmtree(child, ignore_errors=True)
+            else:
+                child.unlink(missing_ok=True)
 
-    monkeypatch.setattr(cleanup_mod, "get_weaviate_client", lambda: FakeClient())
-    return factory
+
+@pytest.fixture
+def fake_client(monkeypatch):
+    fc = FakeClient()
+    monkeypatch.setattr(cleanup_mod, "get_weaviate_client", lambda: fc)
+    return fc
 
 
 def _expired_workspace(temp=True):
@@ -66,7 +91,7 @@ def _expired_workspace(temp=True):
     return ws
 
 
-def test_expired_removed():
+def test_expired_removed(fake_client):
     ws = _expired_workspace()
     n = cleanup_mod.cleanup_expired_workspaces()
     assert n == 1
@@ -75,7 +100,7 @@ def test_expired_removed():
         assert db.get(Workspace, uuid.UUID(ws)) is None
 
 
-def test_non_expired_untouched():
+def test_non_expired_untouched(fake_client):
     ws = client.post("/api/v1/workspaces").json()["id"]
     n = cleanup_mod.cleanup_expired_workspaces()
     assert n == 0
@@ -84,7 +109,7 @@ def test_non_expired_untouched():
         assert db.get(Workspace, uuid.UUID(ws)) is not None
 
 
-def test_deleting_picked_up():
+def test_deleting_picked_up(fake_client):
     ws = _expired_workspace()
     factory = get_session_factory()
     with factory() as db:
@@ -95,43 +120,66 @@ def test_deleting_picked_up():
     assert n == 1
 
 
-def test_weaviate_raises():
-    ws = _expired_workspace()
-    monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setattr(cleanup_mod, "get_weaviate_client", lambda: FakeClient(raise_on_delete=True))
-    other = _expired_workspace()
+def test_weaviate_raises(fake_client, monkeypatch):
+    fake_client._raise = True
+    ws1 = _expired_workspace()
+    ws2 = _expired_workspace()
     n = cleanup_mod.cleanup_expired_workspaces()
-    # one fails, other succeeds
+    assert n == 0
+    factory = get_session_factory()
+    with factory() as db:
+        for ws in (ws1, ws2):
+            w = db.get(Workspace, uuid.UUID(ws))
+            assert w is not None and w.status == "deleting"
+    for ws in (ws1, ws2):
+        assert (Path(get_settings().temp_upload_dir) / ws).exists()
+
+
+def test_weaviate_raises_first_only(monkeypatch):
+    counter = {"n": 0}
+
+    class FC:
+        def __init__(self):
+            self.collections = self
+
+        def get(self, name):
+            return self
+
+        @property
+        def data(self):
+            return self
+
+        def delete_many(self, where=None):
+            counter["n"] += 1
+            if counter["n"] == 1:
+                raise RuntimeError("weaviate boom")
+
+        def close(self):
+            pass
+
+    monkeypatch.setattr(cleanup_mod, "get_weaviate_client", lambda: FC())
+    ws1 = _expired_workspace()
+    ws2 = _expired_workspace()
+    n = cleanup_mod.cleanup_expired_workspaces()
     assert n == 1
     factory = get_session_factory()
     with factory() as db:
-        w = db.get(Workspace, uuid.UUID(ws))
-        assert w is not None and w.status == "deleting"
-    # temp folder untouched for failed
-    assert (Path(get_settings().temp_upload_dir) / ws).exists()
-    monkeypatch.undo()
+        assert db.get(Workspace, uuid.UUID(ws1)) is not None
+        assert db.get(Workspace, uuid.UUID(ws2)) is None
 
 
-def test_second_run_zero():
+def test_second_run_zero(fake_client):
     ws = _expired_workspace()
     assert cleanup_mod.cleanup_expired_workspaces() == 1
     assert cleanup_mod.cleanup_expired_workspaces() == 0
 
 
-def test_missing_temp_folder():
+def test_missing_temp_folder(fake_client):
     ws = _expired_workspace(temp=False)
     assert cleanup_mod.cleanup_expired_workspaces() == 1
 
 
-def test_content_expired_404():
+def test_content_expired_404(fake_client):
     ws = _expired_workspace()
-    # create a doc row? use unknown id -> workspace check first
     r = client.get(f"/api/v1/workspaces/{ws}/documents/{uuid.uuid4()}/content")
     assert r.status_code == 404
-
-
-def test_startup_survives_cleanup(monkeypatch):
-    monkeypatch.setattr(cleanup_mod, "cleanup_expired_workspaces", lambda: (_ for _ in ()).throw(RuntimeError("boom")))
-    # import main fresh not needed; just ensure function raises handled in lifespan not testable here
-    with pytest.raises(RuntimeError):
-        cleanup_mod.cleanup_expired_workspaces()
