@@ -3,20 +3,21 @@ from weaviate.classes.init import Auth
 from typing import List, Dict, Any
 
 import weaviate
-
+from urllib.parse import urlparse
 from app.core.config import get_settings
 from weaviate.classes.config import Configure, DataType, Property, Tokenization
 
 from app.retrieval.embeddings import embed_text
-
 
 def get_weaviate_client() -> weaviate.WeaviateClient:
     settings = get_settings()
     if settings.weaviate_url:
         if settings.weaviate_api_key is None:
             raise RuntimeError("WEAVIATE_API_KEY is required when WEAVIATE_URL is set.")
+        raw = settings.weaviate_url.strip().strip("\"'")
+        host = urlparse(raw if "://" in raw else "https://" + raw).hostname
         return weaviate.connect_to_weaviate_cloud(
-            cluster_url=settings.weaviate_url,
+            cluster_url=f"https://{host}",
             auth_credentials=Auth.api_key(settings.weaviate_api_key.get_secret_value()),
         )
     return weaviate.connect_to_local(
