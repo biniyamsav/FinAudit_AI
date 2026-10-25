@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; style-src 'self' 'unsafe-inline'; script-src 'self'; img-src 'self' data:; connect-src 'self' http://127.0.0.1:8000">
+<title>finaudit</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div class="bg"></div>
+<header class="header">
+  <div class="container header-inner">
+    <div class="brand">
+      <svg class="mark" viewBox="0 0 20 20" aria-hidden="true"><rect x="3" y="3" width="14" height="14" rx="3" fill="none" stroke="currentColor" stroke-width="1.5"/><path d="M6 13V9M10 13V6M14 13V10" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/></svg>
+      <span class="wordmark">finaudit</span>
+    </div>
+    <nav class="header-nav">
+      <a href="#how" class="link">How it works</a>
+      <button class="btn btn-outline" id="start-btn-top">Start</button>
+    </nav>
+  </div>
+</header>
+<main id="app"></main>
+<div id="banner" class="toast hidden"></div>
+<script src="app.js"></script>
+</body>
+</html>
