@@ -4,7 +4,7 @@ import uuid
 from collections.abc import Callable
 from datetime import datetime, timezone
 from typing import Annotated
-
+import logging
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -210,6 +210,9 @@ def create_chat(
     try:
         answer = llm.generate(SYSTEM_PROMPT, user_prompt)
     except LLMError as error:
+        logging.getLogger("uvicorn.error").error(
+            "llm error: %s: %s", type(error).__name__, error, exc_info=error
+        )
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="The language model failed to produce an answer.",
