@@ -1,29 +1,49 @@
 import uuid
+from weaviate.classes.init import Auth
 from typing import List, Dict, Any
 
 import weaviate
 
 from app.core.config import get_settings
+from weaviate.classes.config import Configure, DataType, Property, Tokenization
 
 from app.retrieval.embeddings import embed_text
 
 
-def get_weaviate_client() -> weaviate.Client:
+def get_weaviate_client() -> weaviate.WeaviateClient:
     settings = get_settings()
-    if settings.weaviate_secure:
-        # not fully implemented; default false
-        pass
-    client = weaviate.connect_to_local(
+    if settings.weaviate_url:
+        if settings.weaviate_api_key is None:
+            raise RuntimeError("WEAVIATE_API_KEY is required when WEAVIATE_URL is set.")
+        return weaviate.connect_to_weaviate_cloud(
+            cluster_url=settings.weaviate_url,
+            auth_credentials=Auth.api_key(settings.weaviate_api_key.get_secret_value()),
+        )
+    return weaviate.connect_to_local(
         host=settings.weaviate_host,
         port=settings.weaviate_http_port,
         grpc_port=settings.weaviate_grpc_port,
     )
-    return client
 
+def ensure_chunk_collection(client) -> None:
+    if client.collections.exists("DocumentChunk"):
+        return
+    client.collections.create(
+        "DocumentChunk",
+        vectorizer_config=Configure.Vectorizer.none(),
+        properties=[
+            Property(name="chunk_id", data_type=DataType.TEXT, tokenization=Tokenization.FIELD),
+            Property(name="document_id", data_type=DataType.TEXT, tokenization=Tokenization.FIELD),
+            Property(name="workspace_id", data_type=DataType.TEXT, tokenization=Tokenization.FIELD),
+            Property(name="text", data_type=DataType.TEXT),
+            Property(name="provenance", data_type=DataType.TEXT),
+        ],
+    )
 def store_chunks_in_weaviate(client: weaviate.Client, chunks: List[Any]):
     """
     Stores document chunks and their text directly into Weaviate.
     """
+    ensure_chunk_collection(client)
     collection = client.collections.get("DocumentChunk")
     
     with collection.batch.dynamic() as batch:

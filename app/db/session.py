@@ -12,7 +12,12 @@ def get_engine() -> Engine:
     database_url = get_settings().database_url
     if database_url is None:
         raise RuntimeError("DATABASE_URL is not configured. Set it in .env.")
-    return create_engine(database_url.get_secret_value(), pool_pre_ping=True)
+    url = database_url.get_secret_value()
+    if url.startswith("postgres://"):
+        url = "postgresql+psycopg://" + url[len("postgres://"):]
+    elif url.startswith("postgresql://"):
+        url = "postgresql+psycopg://" + url[len("postgresql://"):]
+    return create_engine(url, pool_pre_ping=True)
 
 
 @lru_cache

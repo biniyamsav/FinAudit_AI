@@ -49,6 +49,7 @@ class Settings(BaseSettings):
 
     llm_provider_mode: Literal["mock", "external"] = "mock"
     llm_api_key: SecretStr | None = None
+    weaviate_url: str | None = None
 
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
@@ -57,8 +58,9 @@ class Settings(BaseSettings):
             if self.database_url is None:
                 raise ValueError("DATABASE_URL is required in production.")
             if self.llm_api_key is None:
-                raise ValueError("GROQ_API_KEY is required in production.")
-
+                raise ValueError("LLM_API_KEY is required in production.")
+            if self.weaviate_url is None:
+                raise ValueError("WEAVIATE_URL is required in production.")
 
 @lru_cache
 def get_settings() -> Settings:
