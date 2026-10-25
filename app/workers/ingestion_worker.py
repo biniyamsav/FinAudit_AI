@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from sqlalchemy import select
+import logging
 
 from app.core.config import get_settings
 from app.db.models import Document, ExtractedContent, IngestionJob
@@ -44,6 +45,9 @@ def _error_code(error: Exception) -> str:
     responses: a malformed document needs a new file, a vector-store outage
     needs an operator.
     """
+    logging.getLogger("uvicorn.error").error(
+        "ingestion error: %s: %s", type(error).__name__, error, exc_info=error
+    )
     if isinstance(error, ExtractionError):
         return error.code
     if isinstance(error, VectorIndexError):
