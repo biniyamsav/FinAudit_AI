@@ -31,6 +31,7 @@ def ensure_chunk_collection(client) -> None:
     client.collections.create(
         "DocumentChunk",
         vectorizer_config=Configure.Vectorizer.none(),
+        vector_index_config=Configure.VectorIndex.hfresh(),
         properties=[
             Property(name="chunk_id", data_type=DataType.TEXT, tokenization=Tokenization.FIELD),
             Property(name="document_id", data_type=DataType.TEXT, tokenization=Tokenization.FIELD),
