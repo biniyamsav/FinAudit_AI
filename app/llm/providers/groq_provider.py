@@ -16,7 +16,7 @@ from openai import OpenAI
 from app.llm.protocol import LLMError
 
 GROQ_BASE_URL = "https://api.groq.com/openai/v1"
-DEFAULT_MODEL = "llama-3.3-70b-versatile"
+DEFAULT_MODEL = "openai/gpt-oss-120b"
 DEFAULT_TEMPERATURE = 0.0
 
 
