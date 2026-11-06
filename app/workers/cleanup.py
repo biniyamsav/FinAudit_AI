@@ -27,10 +27,16 @@ def delete_workspace_data(workspace_id) -> None:
     try:
         from weaviate.classes.query import Filter
 
-        collection = client.collections.get("DocumentChunk")
-        collection.data.delete_many(
-            where=Filter.by_property("workspace_id").equal(wid)
-        )
+        if client.collections.exists("DocumentChunk"):
+            collection = client.collections.get("DocumentChunk")
+            collection.data.delete_many(
+                where=Filter.by_property("workspace_id").equal(wid)
+            )
+        else:
+            logger.warning(
+                "Collection DocumentChunk missing; skipping vector cleanup for %s",
+                wid,
+            )
     finally:
         client.close()
 

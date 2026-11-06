@@ -15,6 +15,9 @@ from app.api.error_handlers import register_error_handlers
 from app.core.config import get_settings
 from app.workers.cleanup import cleanup_expired_workspaces, start_cleanup_thread
 from app.workers.ingestion_worker import recover_stale_documents
+from dotenv import load_dotenv
+
+load_dotenv()
 
 logger = logging.getLogger(__name__)
 

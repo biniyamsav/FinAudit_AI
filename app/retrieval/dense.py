@@ -25,14 +25,13 @@ def get_weaviate_client() -> weaviate.WeaviateClient:
         port=settings.weaviate_http_port,
         grpc_port=settings.weaviate_grpc_port,
     )
-
 def ensure_chunk_collection(client) -> None:
     if client.collections.exists("DocumentChunk"):
         return
     client.collections.create(
         "DocumentChunk",
         vectorizer_config=Configure.Vectorizer.none(),
-        vector_index_config=Configure.VectorIndex.hfresh(),
+        vector_index_config=Configure.VectorIndex.hnsw(),
         properties=[
             Property(name="chunk_id", data_type=DataType.TEXT, tokenization=Tokenization.FIELD),
             Property(name="document_id", data_type=DataType.TEXT, tokenization=Tokenization.FIELD),
